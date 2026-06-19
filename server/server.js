@@ -1,22 +1,48 @@
 const express = require('express');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
+const path = require('path');
 const db = require('./db');
 
+// Nodemailer setup
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'mint.api.iip@gmail.com',
+    pass: 'dyrcvuqwqodknoav'
+  }
+});
+
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
 
 // Get all assets
 app.get('/api/assets', (req, res) => {
+  const userEmail = req.query.userEmail;
   try {
-    const query = `
+    let query = `
       SELECT a.*, u.name as current_user_name 
       FROM assets a 
       LEFT JOIN users u ON a.current_user_id = u.id
-      ORDER BY a.id DESC
     `;
+    
+    // Default to strict filtering if no email is provided (safe fallback)
+    let userRole = 'Guest'; 
+    if (userEmail) {
+      const user = db.prepare('SELECT role FROM users WHERE email = ?').get(userEmail);
+      if (user) userRole = user.role;
+    }
+
+    // Administrators see everything. Others only see 'All' or assets matching their specific role
+    if (userRole !== 'Administrator') {
+      query += ` WHERE a.access_role = 'All' OR a.access_role = '${userRole}'`;
+    }
+
+    query += ` ORDER BY a.id DESC`;
+
     const assets = db.prepare(query).all();
     res.json(assets);
   } catch (err) {
@@ -26,11 +52,13 @@ app.get('/api/assets', (req, res) => {
 
 // Create new asset
 app.post('/api/assets', (req, res) => {
-  const { name, type, category, serial_number, quantity_total, location, cost } = req.body;
+  const { name, type, category, serial_number, quantity_total, location, cost, access_role } = req.body;
   
   if (!name || !type || !category || !location || cost === undefined) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
+
+  const roleToSet = access_role || 'All';
 
   try {
     const insertAsset = db.transaction(() => {
@@ -40,10 +68,10 @@ app.post('/api/assets', (req, res) => {
           throw new Error('Serial number is required for serialized assets');
         }
         const stmt = db.prepare(`
-          INSERT INTO assets (name, type, category, serial_number, status, location, cost)
-          VALUES (?, 'serialized', ?, ?, 'Available', ?, ?)
+          INSERT INTO assets (name, type, category, serial_number, status, location, cost, access_role)
+          VALUES (?, 'serialized', ?, ?, 'Available', ?, ?, ?)
         `);
-        const result = stmt.run(name, category, serial_number, location, Number(cost));
+        const result = stmt.run(name, category, serial_number, location, Number(cost), roleToSet);
         assetId = result.lastInsertRowid;
       } else {
         const qty = Number(quantity_total);
@@ -51,10 +79,10 @@ app.post('/api/assets', (req, res) => {
           throw new Error('Valid total quantity is required for bulk assets');
         }
         const stmt = db.prepare(`
-          INSERT INTO assets (name, type, category, quantity_total, quantity_available, location, cost)
-          VALUES (?, 'bulk', ?, ?, ?, ?, ?)
+          INSERT INTO assets (name, type, category, quantity_total, quantity_available, location, cost, access_role)
+          VALUES (?, 'bulk', ?, ?, ?, ?, ?, ?)
         `);
-        const result = stmt.run(name, category, qty, qty, location, Number(cost));
+        const result = stmt.run(name, category, qty, qty, location, Number(cost), roleToSet);
         assetId = result.lastInsertRowid;
       }
 
@@ -515,10 +543,58 @@ app.post('/api/customer-checkouts', (req, res) => {
         `).run(assetId, asset.name, qty, `Checked out ${qty} unit(s) to customer ${customerName} (${contactNo}) | Total Price: $${Number(price) * qty} | Warranty: ${warrantyInfo || 'None'}`);
       }
 
-      return { success: true };
+      return { success: true, customerId, customerName, email, assetName: asset.name, price, warrantyInfo };
     });
 
     const result = checkoutTx();
+
+    // Fire off async email invoice if email is provided
+    if (result.email) {
+      const mailOptions = {
+        from: '"AZNET Hardware" <mint.api.iip@gmail.com>',
+        to: result.email,
+        subject: `Checkout Invoice - AZNET Hardware (${result.assetName})`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px; overflow: hidden;">
+            <div style="background-color: #06b6d4; padding: 20px; text-align: center; color: white;">
+              <h2 style="margin: 0;">AZNET Hardware Checkout</h2>
+            </div>
+            <div style="padding: 20px; color: #333;">
+              <p>Hello <strong>${result.customerName}</strong>,</p>
+              <p>This is your automated invoice for your recent checkout from AZNET.</p>
+              <table style="width: 100%; border-collapse: collapse; margin-top: 20px; margin-bottom: 20px;">
+                <tr style="border-bottom: 1px solid #ccc;">
+                  <th style="text-align: left; padding: 8px;">Item</th>
+                  <th style="text-align: right; padding: 8px;">Details</th>
+                </tr>
+                <tr style="border-bottom: 1px solid #eee;">
+                  <td style="padding: 8px;">Asset Name</td>
+                  <td style="text-align: right; padding: 8px;">${result.assetName}</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #eee;">
+                  <td style="padding: 8px;">Warranty</td>
+                  <td style="text-align: right; padding: 8px;">${result.warrantyInfo || 'None'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px; font-weight: bold;">Total Price</td>
+                  <td style="text-align: right; padding: 8px; font-weight: bold; color: #06b6d4;">$${result.price}</td>
+                </tr>
+              </table>
+              <p style="font-size: 12px; color: #777; text-align: center;">Please keep this receipt for your records. If you have any questions, contact support at mint.api.iip@gmail.com</p>
+            </div>
+          </div>
+        `
+      };
+
+      transporter.sendMail(mailOptions, (error, info) => {
+        if (error) {
+          console.error("Failed to send automated invoice email. Please ensure YOUR_GMAIL_APP_PASSWORD is set.", error.message);
+        } else {
+          console.log("Invoice email sent: " + info.response);
+        }
+      });
+    }
+
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -572,6 +648,15 @@ app.post('/api/customer-checkouts/:id/return', (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// Serve static frontend in production
+const distPath = path.resolve(__dirname, '../dist');
+app.use(express.static(distPath));
+
+// Catch-all to serve index.html for React Router
+app.get('*', (req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'));
 });
 
 // Start Express server

@@ -26,7 +26,7 @@ import InventoryView from './components/InventoryView';
 import LogsView from './components/LogsView';
 import ThreeDashboard from './components/ThreeDashboard';
 import AuthGate from './components/AuthGate';
-import { signOut, onAuthStateChanged } from './firebase';
+import { auth, signOut, onAuthStateChanged } from './firebase';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -69,9 +69,12 @@ export default function App() {
   // Search Filter for Customers
   const [custSearch, setCustSearch] = useState('');
 
+  // Custom Delete Modal State
+  const [deleteModal, setDeleteModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
+
   // Track currently logged-in Firebase user
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged((user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
     });
     return () => unsubscribe();
@@ -80,8 +83,9 @@ export default function App() {
   // Fetch all states from API
   const fetchData = async () => {
     try {
+      const userEmail = auth.currentUser?.email || '';
       const [assetsRes, logsRes, usersRes, statsRes, customersRes, checkoutsRes] = await Promise.all([
-        fetch('/api/assets'),
+        fetch(`/api/assets?userEmail=${encodeURIComponent(userEmail)}`),
         fetch('/api/logs'),
         fetch('/api/users'),
         fetch('/api/stats'),
@@ -124,40 +128,58 @@ export default function App() {
   }, []);
 
   // Deletion Handlers
-  const handleDeleteAsset = async (assetId) => {
-    if (!window.confirm('Are you sure you want to delete this asset from the database? This will permanently wipe customer checkout lease records for this item.')) return;
-    try {
-      const response = await fetch(`/api/assets/${assetId}`, { method: 'DELETE' });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to delete asset');
-      fetchData();
-    } catch (err) {
-      alert(`Delete Error: ${err.message}`);
-    }
+  const handleDeleteAsset = (assetId) => {
+    setDeleteModal({
+      isOpen: true,
+      title: 'Delete Asset',
+      message: 'Are you sure you want to delete this asset from the database? This will permanently wipe customer checkout lease records for this item.',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/assets/${assetId}`, { method: 'DELETE' });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Failed to delete asset');
+          fetchData();
+        } catch (err) {
+          alert(`Delete Error: ${err.message}`);
+        }
+      }
+    });
   };
 
-  const handleDeleteUser = async (userId) => {
-    if (!window.confirm('Are you sure you want to remove this staff member?')) return;
-    try {
-      const response = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to delete user');
-      fetchData();
-    } catch (err) {
-      alert(`Delete Error: ${err.message}`);
-    }
+  const handleDeleteUser = (userId) => {
+    setDeleteModal({
+      isOpen: true,
+      title: 'Remove Staff',
+      message: 'Are you sure you want to remove this staff member?',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Failed to delete user');
+          fetchData();
+        } catch (err) {
+          alert(`Delete Error: ${err.message}`);
+        }
+      }
+    });
   };
 
-  const handleDeleteCustomer = async (customerId) => {
-    if (!window.confirm('Are you sure you want to remove this customer file?')) return;
-    try {
-      const response = await fetch(`/api/customers/${customerId}`, { method: 'DELETE' });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to delete customer');
-      fetchData();
-    } catch (err) {
-      alert(`Delete Error: ${err.message}`);
-    }
+  const handleDeleteCustomer = (customerId) => {
+    setDeleteModal({
+      isOpen: true,
+      title: 'Remove Customer',
+      message: 'Are you sure you want to remove this customer file?',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/customers/${customerId}`, { method: 'DELETE' });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Failed to delete customer');
+          fetchData();
+        } catch (err) {
+          alert(`Delete Error: ${err.message}`);
+        }
+      }
+    });
   };
 
   // Staff registration
@@ -315,18 +337,24 @@ Thank you for doing business with AZNET!
   };
 
   // Customer Return lease
-  const handleCustomerReturn = async (checkoutId) => {
-    if (!window.confirm('Process return and set hardware back in available stock?')) return;
-    try {
-      const response = await fetch(`/api/customer-checkouts/${checkoutId}/return`, {
-        method: 'POST'
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Return failed');
-      fetchData();
-    } catch (err) {
-      alert(`Return Error: ${err.message}`);
-    }
+  const handleCustomerReturn = (checkoutId) => {
+    setDeleteModal({
+      isOpen: true,
+      title: 'Process Return',
+      message: 'Process return and set hardware back in available stock?',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/customer-checkouts/${checkoutId}/return`, {
+            method: 'POST'
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Return failed');
+          fetchData();
+        } catch (err) {
+          alert(`Return Error: ${err.message}`);
+        }
+      }
+    });
   };
 
   // Pre-populate price on asset select
@@ -438,7 +466,7 @@ Thank you for doing business with AZNET!
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-slate-400 font-mono">Authenticated: {currentUser.email}</span>
                   <button 
-                    onClick={() => signOut()}
+                    onClick={() => signOut(auth)}
                     className="bg-slate-900/60 hover:bg-slate-900 text-slate-400 hover:text-red-400 border border-slate-800 px-3 py-1.5 rounded-lg transition text-xs flex items-center gap-1.5 font-semibold"
                   >
                     <LogOut className="w-3.5 h-3.5" />
@@ -484,6 +512,7 @@ Thank you for doing business with AZNET!
                   <InventoryView 
                     assets={assets} 
                     users={users} 
+                    currentUser={currentUser}
                     onActionSuccess={fetchData}
                     onDeleteAsset={handleDeleteAsset}
                   />
@@ -1123,6 +1152,41 @@ Thank you for doing business with AZNET!
             )}
           </div>
         </main>
+
+        {/* CUSTOM DELETE CONFIRMATION MODAL */}
+        {deleteModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+            <div className="bg-[#0a0f19] border border-slate-800 rounded-xl max-w-sm w-full p-6 shadow-2xl animate-slide-in">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5 text-red-500" />
+                </div>
+                <h3 className="text-white font-bold text-base">{deleteModal.title}</h3>
+              </div>
+              <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+                {deleteModal.message}
+              </p>
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setDeleteModal({ isOpen: false, title: '', message: '', onConfirm: null })}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (deleteModal.onConfirm) await deleteModal.onConfirm();
+                    setDeleteModal({ isOpen: false, title: '', message: '', onConfirm: null });
+                  }}
+                  className="px-4 py-2 rounded-lg text-sm font-bold bg-red-600 hover:bg-red-500 text-white transition shadow-lg shadow-red-500/20 flex items-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Confirm Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AuthGate>
   );

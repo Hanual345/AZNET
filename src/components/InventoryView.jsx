@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { Package, Plus, Clipboard, MapPin, DollarSign, Eye, Tag, AlertCircle, ArrowRight, UserCheck, Trash2 } from 'lucide-react';
 
-export default function InventoryView({ assets, users, onActionSuccess, onDeleteAsset }) {
+export default function InventoryView({ assets, users, currentUser, onActionSuccess, onDeleteAsset }) {
   const [activeTab, setActiveTab] = useState('serialized'); // 'serialized' | 'bulk'
   const [showAddForm, setShowAddForm] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('All');
+
+  const myRole = users.find(u => u.email === currentUser?.email)?.role || 'Guest';
+  const isAdmin = myRole === 'Administrator';
 
   // Form State
   const [name, setName] = useState('');
@@ -14,6 +17,7 @@ export default function InventoryView({ assets, users, onActionSuccess, onDelete
   const [quantityTotal, setQuantityTotal] = useState(1);
   const [location, setLocation] = useState('');
   const [cost, setCost] = useState('');
+  const [accessRole, setAccessRole] = useState('All');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -59,7 +63,8 @@ export default function InventoryView({ assets, users, onActionSuccess, onDelete
           serial_number: type === 'serialized' ? serialNumber : null,
           quantity_total: type === 'bulk' ? Number(quantityTotal) : null,
           location,
-          cost: Number(cost)
+          cost: Number(cost),
+          access_role: accessRole
         })
       });
 
@@ -72,6 +77,7 @@ export default function InventoryView({ assets, users, onActionSuccess, onDelete
       setQuantityTotal(1);
       setLocation('');
       setCost('');
+      setAccessRole('All');
       setShowAddForm(false);
       onActionSuccess();
     } catch (err) {
@@ -301,6 +307,27 @@ export default function InventoryView({ assets, users, onActionSuccess, onDelete
                 required
               />
             </div>
+
+            {/* Access Role (Admin Only) */}
+            {isAdmin && (
+              <div>
+                <label className="text-xs font-semibold text-slate-400 block mb-1.5 flex items-center gap-1">
+                  <Eye className="w-3.5 h-3.5 text-purple-400" />
+                  Visibility Restrictions
+                </label>
+                <select
+                  value={accessRole}
+                  onChange={(e) => setAccessRole(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
+                >
+                  <option value="All">All Staff (Public)</option>
+                  <option value="Administrator">Administrators Only</option>
+                  <option value="Technician">Technicians Only</option>
+                  <option value="Field Engineer">Field Engineers Only</option>
+                  <option value="Media Producer">Media Producers Only</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2 justify-end pt-4 border-t border-slate-900">
@@ -340,8 +367,14 @@ export default function InventoryView({ assets, users, onActionSuccess, onDelete
                 {/* Visual Header */}
                 <div>
                   <div className="flex items-start justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono flex items-center gap-2">
                       {asset.category}
+                      {asset.access_role && asset.access_role !== 'All' && (
+                        <span title={`Restricted to ${asset.access_role}`} className="px-1.5 py-0.5 bg-purple-500/10 text-purple-400 rounded flex items-center gap-1 border border-purple-500/30">
+                          <Eye className="w-3 h-3" />
+                          {asset.access_role}
+                        </span>
+                      )}
                     </span>
                     <div className="flex items-center gap-2">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${

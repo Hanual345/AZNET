@@ -1,7 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const dbPath = path.resolve(__dirname, 'database.db');
+const dbPath = process.env.DATABASE_PATH || path.resolve(__dirname, 'database.db');
 const db = new Database(dbPath);
 
 // Enable WAL mode for better concurrency
@@ -29,6 +29,7 @@ db.exec(`
     quantity_available INTEGER, -- Null for serialized items
     location TEXT NOT NULL,
     cost REAL NOT NULL,
+    access_role TEXT NOT NULL DEFAULT 'All', -- 'All', 'Administrator', 'Technician', 'Field Engineer', 'Media Producer', etc.
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(current_user_id) REFERENCES users(id)
   );
@@ -104,29 +105,37 @@ if (userCount.count === 0) {
   console.log('Seeded database with users.');
 }
 
+// Dynamically alter assets table if access_role is missing
+try {
+  db.exec("ALTER TABLE assets ADD COLUMN access_role TEXT NOT NULL DEFAULT 'All'");
+  console.log("Added access_role column to assets table.");
+} catch (err) {
+  // Column likely already exists
+}
+
 // Seed Assets if empty
 const assetCount = db.prepare('SELECT COUNT(*) as count FROM assets').get();
 if (assetCount.count === 0) {
   const insertAsset = db.prepare(`
-    INSERT INTO assets (name, type, category, serial_number, status, current_user_id, quantity_total, quantity_available, location, cost)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO assets (name, type, category, serial_number, status, current_user_id, quantity_total, quantity_available, location, cost, access_role)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   // Serialized assets
-  insertAsset.run('Sony FX6 Cinema Camera', 'serialized', 'Cameras', 'SN-FX6-90234', 'Available', null, null, null, 'Studio A', 5999.99);
-  insertAsset.run('RED Komodo 6K Camera', 'serialized', 'Cameras', 'SN-RED-11204', 'Checked Out', 4, null, null, 'Studio B', 6125.00);
-  insertAsset.run('DeWalt DCD999 Hammer Drill', 'serialized', 'Tools', 'SN-DEW-84729', 'Available', null, null, null, 'Workshop Locker 4', 299.00);
-  insertAsset.run('Makita 18V Cordless Drill', 'serialized', 'Tools', 'SN-MAK-29104', 'Maintenance', null, null, null, 'Repair Room Shelf C', 189.50);
-  insertAsset.run('MacBook Pro 16" M3 Max', 'serialized', 'Laptops', 'SN-MBP-78291', 'Available', null, null, null, 'Main Server Room', 3499.00);
-  insertAsset.run('DJI Ronin 2 Stabilizer', 'serialized', 'Gimbal', 'SN-DJI-40918', 'Available', null, null, null, 'Studio A Closet', 8499.00);
-  insertAsset.run('Rode Wireless PRO Mic Kit', 'serialized', 'Audio', 'SN-ROD-09283', 'Checked Out', 2, null, null, 'Locker 12', 399.00);
+  insertAsset.run('Sony FX6 Cinema Camera', 'serialized', 'Cameras', 'SN-FX6-90234', 'Available', null, null, null, 'Studio A', 5999.99, 'Administrator'); // Admin Only example
+  insertAsset.run('RED Komodo 6K Camera', 'serialized', 'Cameras', 'SN-RED-11204', 'Checked Out', 4, null, null, 'Studio B', 6125.00, 'Media Producer'); // Role restricted example
+  insertAsset.run('DeWalt DCD999 Hammer Drill', 'serialized', 'Tools', 'SN-DEW-84729', 'Available', null, null, null, 'Workshop Locker 4', 299.00, 'All');
+  insertAsset.run('Makita 18V Cordless Drill', 'serialized', 'Tools', 'SN-MAK-29104', 'Maintenance', null, null, null, 'Repair Room Shelf C', 189.50, 'All');
+  insertAsset.run('MacBook Pro 16" M3 Max', 'serialized', 'Laptops', 'SN-MBP-78291', 'Available', null, null, null, 'Main Server Room', 3499.00, 'All');
+  insertAsset.run('DJI Ronin 2 Stabilizer', 'serialized', 'Gimbal', 'SN-DJI-40918', 'Available', null, null, null, 'Studio A Closet', 8499.00, 'All');
+  insertAsset.run('Rode Wireless PRO Mic Kit', 'serialized', 'Audio', 'SN-ROD-09283', 'Checked Out', 2, null, null, 'Locker 12', 399.00, 'All');
 
   // Bulk assets
-  insertAsset.run('Cat6 Ethernet Cable 10ft', 'bulk', 'Cables', null, null, null, 150, 142, 'Storage Room Bin B1', 4.99);
-  insertAsset.run('USB-C Charging Cable 6ft', 'bulk', 'Cables', null, null, null, 80, 52, 'Storage Room Bin B3', 9.99);
-  insertAsset.run('Rechargeable AA Batteries (4-Pack)', 'bulk', 'Power', null, null, null, 200, 178, 'Battery Charging Rack', 14.50);
-  insertAsset.run('Gaffer Tape Black 2" x 50yd', 'bulk', 'Supplies', null, null, null, 40, 18, 'Studio Consumables Shelf', 18.99);
-  insertAsset.run('HDMI 2.1 Cable 15ft', 'bulk', 'Cables', null, null, null, 60, 48, 'Storage Room Bin B2', 14.99);
+  insertAsset.run('Cat6 Ethernet Cable 10ft', 'bulk', 'Cables', null, null, null, 150, 142, 'Storage Room Bin B1', 4.99, 'All');
+  insertAsset.run('USB-C Charging Cable 6ft', 'bulk', 'Cables', null, null, null, 80, 52, 'Storage Room Bin B3', 9.99, 'All');
+  insertAsset.run('Rechargeable AA Batteries (4-Pack)', 'bulk', 'Power', null, null, null, 200, 178, 'Battery Charging Rack', 14.50, 'All');
+  insertAsset.run('Gaffer Tape Black 2" x 50yd', 'bulk', 'Supplies', null, null, null, 40, 18, 'Studio Consumables Shelf', 18.99, 'All');
+  insertAsset.run('HDMI 2.1 Cable 15ft', 'bulk', 'Cables', null, null, null, 60, 48, 'Storage Room Bin B2', 14.99, 'All');
 
   // Create initial logs
   const insertLog = db.prepare(`
