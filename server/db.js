@@ -1,7 +1,20 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const dbPath = process.env.DATABASE_PATH || path.resolve(__dirname, 'database.db');
+const fs = require('fs');
+
+let dbPath;
+
+if (process.versions && process.versions.electron) {
+  // We are running inside Electron
+  const { app } = require('electron');
+  const userDataPath = app.getPath('userData');
+  dbPath = path.join(userDataPath, 'database.db');
+} else {
+  // We are running as standard Node.js
+  dbPath = process.env.DATABASE_PATH || path.resolve(__dirname, 'database.db');
+}
+
 const db = new Database(dbPath);
 
 // Enable WAL mode for better concurrency
