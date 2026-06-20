@@ -27,7 +27,7 @@ import DashboardView from './components/DashboardView';
 import InventoryView from './components/InventoryView';
 import LogsView from './components/LogsView';
 import ThreeDashboard from './components/ThreeDashboard';
-import AuthGate from './components/AuthGate';
+
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -407,8 +407,7 @@ Thank you for doing business with AZNET!
   );
 
   return (
-    <AuthGate>
-      <div className="min-h-screen bg-[#080b11] cyber-grid flex text-slate-100 selection:bg-cyan-500 selection:text-slate-950">
+    <div className="min-h-screen bg-[#080b11] cyber-grid flex text-slate-100 selection:bg-cyan-500 selection:text-slate-950 overflow-hidden">
         
         {/* 1. CYBERPUNK SIDEBAR */}
         <aside className="w-64 bg-[#0a0f19]/90 border-r border-slate-900 flex flex-col justify-between shrink-0">
@@ -1219,6 +1218,5 @@ Thank you for doing business with AZNET!
           </div>
         )}
       </div>
-    </AuthGate>
   );
 }
