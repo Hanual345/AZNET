@@ -3,7 +3,7 @@ import { Package, Plus, Clipboard, MapPin, DollarSign, Eye, Tag, AlertCircle, Ar
 import { db } from '../firebase';
 import { collection, addDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 
-export default function InventoryView({ assets, users, currentUser, onActionSuccess, onDeleteAsset }) {
+export default function InventoryView({ assets, users, currentUser, onActionSuccess, onDeleteAsset, globalSettings }) {
   const [activeTab, setActiveTab] = useState('serialized'); // 'serialized' | 'bulk'
   const [showAddForm, setShowAddForm] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('All');
@@ -351,7 +351,7 @@ export default function InventoryView({ assets, users, currentUser, onActionSucc
 
             {/* Cost */}
             <div>
-              <label className="text-xs font-semibold text-slate-400 block mb-1.5">Cost per Unit ($)</label>
+              <label className="text-xs font-semibold text-slate-400 block mb-1.5">Cost per Unit ({globalSettings?.currencySymbol || '$'})</label>
               <input
                 type="number"
                 step="0.01"
@@ -477,7 +477,7 @@ export default function InventoryView({ assets, users, currentUser, onActionSucc
                   {/* Costing */}
                   <div className="mt-2.5 flex items-center gap-1 text-[11px] text-slate-400 font-mono">
                     <DollarSign className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Value: ${asset.cost.toFixed(2)}</span>
+                    <span>Value: {globalSettings?.currencySymbol || '$'}{asset.cost.toFixed(2)}</span>
                   </div>
 
                   {/* Quantity and Progress bar for Bulk */}
@@ -535,7 +535,7 @@ export default function InventoryView({ assets, users, currentUser, onActionSucc
                       ) : (
                         <>
                           <span className="text-slate-500 font-medium">
-                            Total value: ${(asset.cost * asset.quantity_total).toFixed(2)}
+                            Total value: {globalSettings?.currencySymbol || '$'}{(asset.cost * asset.quantity_total).toFixed(2)}
                           </span>
                           <div className="flex gap-2">
                             <button

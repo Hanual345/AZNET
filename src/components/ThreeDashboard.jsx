@@ -5,7 +5,7 @@ import { Activity, ShieldAlert, Package, Check, RefreshCw, X, Box as BoxIcon } f
 import { db } from '../firebase';
 import { collection, addDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 
-export default function ThreeDashboard({ assets, users, onActionSuccess }) {
+export default function ThreeDashboard({ assets, users, onActionSuccess, globalSettings }) {
   const containerRef = useRef(null);
   const [hoveredAsset, setHoveredAsset] = useState(null);
   const [selectedAsset, setSelectedAsset] = useState(null);
@@ -598,7 +598,7 @@ export default function ThreeDashboard({ assets, users, onActionSuccess }) {
                   </div>
                   <div>
                     <label className="text-[10px] uppercase font-bold text-slate-500 block">Value / Unit</label>
-                    <span className="text-slate-300 font-mono text-sm block">${selectedAsset.cost.toFixed(2)}</span>
+                    <span className="text-slate-300 font-mono text-sm block">{globalSettings?.currencySymbol || '$'}{selectedAsset.cost.toFixed(2)}</span>
                   </div>
                 </div>
               )}
@@ -609,7 +609,7 @@ export default function ThreeDashboard({ assets, users, onActionSuccess }) {
                 </div>
                 <div>
                   <label className="text-[10px] uppercase font-bold text-slate-500 block">Total Cost</label>
-                  <span className="text-slate-300 font-mono text-sm block">${(selectedAsset.cost * (selectedAsset.quantity_total || 1)).toFixed(2)}</span>
+                  <span className="text-slate-300 font-mono text-sm block">{globalSettings?.currencySymbol || '$'}{(selectedAsset.cost * (selectedAsset.quantity_total || 1)).toFixed(2)}</span>
                 </div>
               </div>
             </div>

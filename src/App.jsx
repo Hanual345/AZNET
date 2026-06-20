@@ -38,6 +38,7 @@ export default function App() {
   const [customers, setCustomers] = useState([]);
   const [customerCheckouts, setCustomerCheckouts] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [globalSettings, setGlobalSettings] = useState({ companyName: 'AZNET', currencySymbol: '$' });
 
   const [dbStatus, setDbStatus] = useState('Connected');
   const [loading, setLoading] = useState(true);
@@ -105,6 +106,12 @@ export default function App() {
       setCustomerCheckouts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
+    const unsubSettings = onSnapshot(doc(db, 'settings', 'general'), (docSnap) => {
+      if (docSnap.exists()) {
+        setGlobalSettings(docSnap.data());
+      }
+    });
+
     setDbStatus('Connected');
     setLoading(false);
 
@@ -114,6 +121,7 @@ export default function App() {
       unsubUsers();
       unsubCustomers();
       unsubCheckouts();
+      unsubSettings();
     };
   }, []);
 
@@ -227,8 +235,9 @@ export default function App() {
 
   // Customer checkout receipt downloader
   const downloadReceipt = (checkoutDetails) => {
+    const cName = globalSettings.companyName.toUpperCase();
     const receiptContent = `================================================
-               AZNET HARDWARE INVOICE
+               ${cName} HARDWARE INVOICE
                   OFFLINE LEDGER
 ================================================
 Transaction ID : CC-INV-${checkoutDetails.id || Math.floor(Math.random()*90000+10000)}
@@ -246,19 +255,19 @@ Quantity Leased: ${checkoutDetails.quantity || 1}
 
 FINANCIALS & TERMS:
 Warranty Terms : ${checkoutDetails.warrantyInfo}
-Unit Price     : $${Number(checkoutDetails.price).toFixed(2)}
-Total Paid     : $${(Number(checkoutDetails.price) * (Number(checkoutDetails.quantity) || 1)).toFixed(2)}
+Unit Price     : ${globalSettings.currencySymbol}${Number(checkoutDetails.price).toFixed(2)}
+Total Paid     : ${globalSettings.currencySymbol}${(Number(checkoutDetails.price) * (Number(checkoutDetails.quantity) || 1)).toFixed(2)}
 ------------------------------------------------
 STATUS         : ACTIVE LEASE AGREEMENT
 Ledger Lock    : SECURE DATABASE CRYPTO-LOCK
 ================================================
-Thank you for doing business with AZNET!
+Thank you for doing business with ${globalSettings.companyName}!
 `;
     const blob = new Blob([receiptContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `aznet_receipt_${checkoutDetails.customerName.replace(/\s+/g, '_')}_INV.txt`);
+    link.setAttribute('download', `${globalSettings.companyName.toLowerCase()}_receipt_${checkoutDetails.customerName.replace(/\s+/g, '_')}_INV.txt`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -344,21 +353,21 @@ Thank you for doing business with AZNET!
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             email: custEmail,
-            subject: 'AZNET Invoice / Hardware Lease Receipt',
+            subject: `${globalSettings.companyName} Invoice / Hardware Lease Receipt`,
             html: `
               <div style="font-family: sans-serif; padding: 20px;">
-                <h2 style="color: #06b6d4;">AZNET INVOICE</h2>
+                <h2 style="color: #06b6d4;">${globalSettings.companyName.toUpperCase()} INVOICE</h2>
                 <p>Hello <b>${custName}</b>,</p>
                 <p>Thank you for doing business with us! Here are your transaction details:</p>
                 <div style="background: #f1f5f9; padding: 15px; border-radius: 8px;">
                   <p><b>Transaction ID:</b> CC-INV-${newCheckoutRef.id}</p>
                   <p><b>Asset:</b> ${selectedAsset.name}</p>
                   <p><b>Quantity:</b> ${qty}</p>
-                  <p><b>Total Price:</b> $${Number(custPrice).toFixed(2)}</p>
+                  <p><b>Total Price:</b> ${globalSettings.currencySymbol}${Number(custPrice).toFixed(2)}</p>
                   <p><b>Warranty:</b> ${custWarranty}</p>
                 </div>
                 <p>Please contact us if you have any questions.</p>
-                <p style="color: #64748b; font-size: 12px; margin-top: 30px;">This is an automated message from the AZNET platform.</p>
+                <p style="color: #64748b; font-size: 12px; margin-top: 30px;">This is an automated message from the ${globalSettings.companyName} platform.</p>
               </div>
             `
           })
@@ -372,7 +381,7 @@ Thank you for doing business with AZNET!
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             phone: custContact,
-            message: `AZNET: Transaction CC-INV-${newCheckoutRef.id} confirmed. Asset: ${selectedAsset.name}. Total: $${Number(custPrice).toFixed(2)}.`
+            message: `${globalSettings.companyName}: Transaction CC-INV-${newCheckoutRef.id} confirmed. Asset: ${selectedAsset.name}. Total: ${globalSettings.currencySymbol}${Number(custPrice).toFixed(2)}.`
           })
         }).catch(err => console.error("Failed to trigger SMS endpoint:", err));
       }
@@ -458,7 +467,7 @@ Thank you for doing business with AZNET!
                 <span className="font-extrabold text-slate-950 font-mono text-base">AZ</span>
               </div>
               <div>
-                <h2 className="text-sm font-bold text-white tracking-wider uppercase m-0 leading-none">AZNET</h2>
+                <h2 className="text-sm font-bold text-white tracking-wider uppercase m-0 leading-none">{globalSettings.companyName.toUpperCase()}</h2>
                 <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-widest font-mono">Manager</span>
               </div>
             </div>
@@ -567,6 +576,7 @@ Thank you for doing business with AZNET!
                     users={users} 
                     stats={stats} 
                     onActionSuccess={() => {}} 
+                    globalSettings={globalSettings}
                   />
                 )}
 
@@ -575,6 +585,7 @@ Thank you for doing business with AZNET!
                     assets={assets} 
                     users={users} 
                     onActionSuccess={() => {}} 
+                    globalSettings={globalSettings}
                   />
                 )}
 
@@ -585,11 +596,15 @@ Thank you for doing business with AZNET!
                     currentUser={currentUser}
                     onActionSuccess={() => {}}
                     onDeleteAsset={handleDeleteAsset}
+                    globalSettings={globalSettings}
                   />
                 )}
 
                 {activeTab === 'logs' && (
-                  <LogsView logs={logs} />
+                  <LogsView 
+                    logs={logs} 
+                    globalSettings={globalSettings}
+                  />
                 )}
 
                 {/* NEW TAB: CUSTOMER CHECKOUT & ACTIVE LEASES LIST */}
@@ -1157,62 +1172,87 @@ Thank you for doing business with AZNET!
 
                 {activeTab === 'settings' && (
                   <div className="space-y-6 max-w-2xl">
-                    {/* Database Information */}
+                    <div className="glass-card p-6 rounded-xl border border-slate-800 space-y-4">
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-900 pb-3">
+                        <SettingsIcon className="w-4 h-4 text-cyan-400" />
+                        <span>Global Preferences</span>
+                      </h3>
+
+                      <form 
+                        className="space-y-4 pt-2"
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const formData = new FormData(e.target);
+                          const newName = formData.get('companyName');
+                          const newCurrency = formData.get('currencySymbol');
+                          try {
+                            await setDoc(doc(db, 'settings', 'general'), {
+                              companyName: newName || 'AZNET',
+                              currencySymbol: newCurrency || '$'
+                            });
+                            alert('Settings saved successfully!');
+                          } catch (err) {
+                            alert('Failed to save settings: ' + err.message);
+                          }
+                        }}
+                      >
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-400 block">Company Name</label>
+                          <input 
+                            type="text" 
+                            name="companyName"
+                            defaultValue={globalSettings.companyName}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 font-medium"
+                            placeholder="e.g. AZNET"
+                            required
+                          />
+                          <p className="text-[10px] text-slate-500">This replaces "AZNET" across all invoices, emails, and the UI.</p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-400 block">Currency Symbol</label>
+                          <input 
+                            type="text" 
+                            name="currencySymbol"
+                            defaultValue={globalSettings.currencySymbol}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 font-mono"
+                            placeholder="e.g. $, ₹, £, €"
+                            required
+                          />
+                          <p className="text-[10px] text-slate-500">This replaces the "$" symbol across all inventory metrics and receipts.</p>
+                        </div>
+
+                        <div className="pt-2">
+                          <button
+                            type="submit"
+                            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-slate-950 text-xs font-bold uppercase tracking-wider rounded-lg transition"
+                          >
+                            Save Settings
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+
                     <div className="glass-card p-6 rounded-xl border border-slate-800 space-y-4">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-900 pb-3">
                         <Database className="w-4 h-4 text-cyan-400" />
-                        <span>SQLite Engine Schema Settings</span>
+                        <span>System Architecture</span>
                       </h3>
-
                       <div className="space-y-3.5 text-xs">
                         <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">Database Engine</span>
-                          <span className="text-white font-mono">SQLite3 via better-sqlite3</span>
+                          <span className="text-slate-500">Backend Engine</span>
+                          <span className="text-white font-mono">Firebase Serverless (Firestore)</span>
                         </div>
                         <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">Immutability Triggers Status</span>
+                          <span className="text-slate-500">Authentication</span>
                           <span className="text-emerald-400 font-bold flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-cyan" />
-                            <span>Active (LOCKED)</span>
+                            <span>Active (Secured)</span>
                           </span>
                         </div>
-                        <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">Journaling Mode</span>
-                          <span className="text-white font-mono font-semibold">WAL (Write-Ahead Logging)</span>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">Conflict Resolution Policy</span>
-                          <span className="text-white">Transaction-level rollback on status collision</span>
-                        </div>
                         <div className="flex justify-between py-1">
-                          <span className="text-slate-500">Database Storage Mode</span>
-                          <span className="text-white font-mono">Local in-process file storage</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Dev system properties */}
-                    <div className="glass-card p-6 rounded-xl border border-slate-800 space-y-4">
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-900 pb-3">
-                        <Info className="w-4 h-4 text-cyan-400" />
-                        <span>Local Workspace Environment Info</span>
-                      </h3>
-                      <div className="space-y-3.5 text-xs">
-                        <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">Client Engine</span>
-                          <span className="text-white">React, Vite, Tailwind CSS</span>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">3D WebGL Library</span>
-                          <span className="text-white font-mono">Three.js</span>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">Developer Mode</span>
-                          <span className="text-white font-semibold">Offline-First Local Sync</span>
-                        </div>
-                        <div className="flex justify-between py-1">
-                          <span className="text-slate-500">Polling Synchronizer Rate</span>
-                          <span className="text-cyan-400 font-mono font-bold">3000ms</span>
+                          <span className="text-slate-500">Hosting</span>
+                          <span className="text-white font-mono font-semibold">Vercel Edge Network</span>
                         </div>
                       </div>
                     </div>

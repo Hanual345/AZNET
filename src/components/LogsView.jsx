@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Search, ShieldAlert, ShieldCheck, Download, Trash2, Calendar } from 'lucide-react';
 
-export default function LogsView({ logs }) {
+export default function LogsView({ logs, globalSettings }) {
   const [search, setSearch] = useState('');
   const [actionFilter, setActionFilter] = useState('All');
 
@@ -42,7 +42,7 @@ export default function LogsView({ logs }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `aznet_audit_ledger_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `${globalSettings?.companyName?.toLowerCase() || 'aznet'}_audit_ledger_${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
