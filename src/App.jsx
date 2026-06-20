@@ -337,6 +337,46 @@ Thank you for doing business with AZNET!
         quantity: qty
       });
 
+      // TRIGGER SERVERLESS EMAIL NOTIFICATION
+      if (custEmail) {
+        fetch('/api/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: custEmail,
+            subject: 'AZNET Invoice / Hardware Lease Receipt',
+            html: `
+              <div style="font-family: sans-serif; padding: 20px;">
+                <h2 style="color: #06b6d4;">AZNET INVOICE</h2>
+                <p>Hello <b>${custName}</b>,</p>
+                <p>Thank you for doing business with us! Here are your transaction details:</p>
+                <div style="background: #f1f5f9; padding: 15px; border-radius: 8px;">
+                  <p><b>Transaction ID:</b> CC-INV-${newCheckoutRef.id}</p>
+                  <p><b>Asset:</b> ${selectedAsset.name}</p>
+                  <p><b>Quantity:</b> ${qty}</p>
+                  <p><b>Total Price:</b> $${Number(custPrice).toFixed(2)}</p>
+                  <p><b>Warranty:</b> ${custWarranty}</p>
+                </div>
+                <p>Please contact us if you have any questions.</p>
+                <p style="color: #64748b; font-size: 12px; margin-top: 30px;">This is an automated message from the AZNET platform.</p>
+              </div>
+            `
+          })
+        }).catch(err => console.error("Failed to trigger email endpoint:", err));
+      }
+
+      // TRIGGER SERVERLESS SMS NOTIFICATION
+      if (custContact) {
+        fetch('/api/send-sms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phone: custContact,
+            message: `AZNET: Transaction CC-INV-${newCheckoutRef.id} confirmed. Asset: ${selectedAsset.name}. Total: $${Number(custPrice).toFixed(2)}.`
+          })
+        }).catch(err => console.error("Failed to trigger SMS endpoint:", err));
+      }
+
       // Clear Form states
       setCustName('');
       setCustContact('');
