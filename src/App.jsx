@@ -220,7 +220,6 @@ export default function App() {
       setNewCustContact('');
       setNewCustEmail('');
       setShowAddCust(false);
-      fetchData();
     } catch (err) {
       setCustError(err.message);
     }
@@ -528,7 +527,7 @@ Thank you for doing business with AZNET!
                     logs={logs} 
                     users={users} 
                     stats={stats} 
-                    onActionSuccess={fetchData} 
+                    onActionSuccess={() => {}} 
                   />
                 )}
 
@@ -536,7 +535,7 @@ Thank you for doing business with AZNET!
                   <ThreeDashboard 
                     assets={assets} 
                     users={users} 
-                    onActionSuccess={fetchData} 
+                    onActionSuccess={() => {}} 
                   />
                 )}
 
@@ -545,7 +544,7 @@ Thank you for doing business with AZNET!
                     assets={assets} 
                     users={users} 
                     currentUser={currentUser}
-                    onActionSuccess={fetchData}
+                    onActionSuccess={() => {}}
                     onDeleteAsset={handleDeleteAsset}
                   />
                 )}

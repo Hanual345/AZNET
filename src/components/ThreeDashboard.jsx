@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Activity, ShieldAlert, Package, Check, RefreshCw, X, Box as BoxIcon } from 'lucide-react';
+import { db } from '../firebase';
+import { collection, addDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 
 export default function ThreeDashboard({ assets, users, onActionSuccess }) {
   const containerRef = useRef(null);
@@ -365,16 +367,34 @@ export default function ThreeDashboard({ assets, users, onActionSuccess }) {
     setLoading(true);
     setErrorMessage('');
     try {
-      const response = await fetch(`/api/assets/${selectedAsset.id}/checkout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: Number(checkoutUser),
-          quantity: selectedAsset.type === 'bulk' ? Number(checkoutQty) : 1
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Checkout failed');
+      const assetRef = doc(db, 'assets', selectedAsset.id);
+      const assetSnap = await getDoc(assetRef);
+      if (!assetSnap.exists()) throw new Error("Asset not found");
+      const asset = assetSnap.data();
+
+      const targetUserId = checkoutUser;
+      const u = users.find(user => user.id === targetUserId);
+      const userName = u ? u.name : 'Unknown';
+
+      const qty = selectedAsset.type === 'bulk' ? Number(checkoutQty) : 1;
+
+      if (selectedAsset.type === 'serialized') {
+        if (asset.status !== 'Available') throw new Error("Asset is not available");
+        await updateDoc(assetRef, { status: 'Checked Out', current_user_id: targetUserId });
+        await addDoc(collection(db, 'audit_logs'), {
+          asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'serialized',
+          action: 'Checkout', user_id: targetUserId, user_name: userName,
+          details: `Checked out to ${userName} via 3D view`, timestamp: new Date().toISOString()
+        });
+      } else {
+        if (asset.quantity_available < qty) throw new Error("Insufficient quantity");
+        await updateDoc(assetRef, { quantity_available: asset.quantity_available - qty });
+        await addDoc(collection(db, 'audit_logs'), {
+          asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'bulk',
+          action: 'Quantity Checkout', user_id: targetUserId, user_name: userName,
+          quantity: qty, details: `Checked out ${qty} unit(s) to ${userName} via 3D view`, timestamp: new Date().toISOString()
+        });
+      }
       
       onActionSuccess();
       setSelectedAsset(null);
@@ -389,15 +409,33 @@ export default function ThreeDashboard({ assets, users, onActionSuccess }) {
     setLoading(true);
     setErrorMessage('');
     try {
-      const response = await fetch(`/api/assets/${selectedAsset.id}/checkin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quantity: selectedAsset.type === 'bulk' ? Number(checkoutQty) : 1
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Checkin failed');
+      const assetRef = doc(db, 'assets', selectedAsset.id);
+      const assetSnap = await getDoc(assetRef);
+      if (!assetSnap.exists()) throw new Error("Asset not found");
+      const asset = assetSnap.data();
+
+      const qty = selectedAsset.type === 'bulk' ? Number(checkoutQty) : 1;
+
+      if (selectedAsset.type === 'serialized') {
+        if (asset.status !== 'Checked Out') throw new Error("Asset is not checked out");
+        const u = users.find(user => user.id === asset.current_user_id);
+        const userName = u ? u.name : 'Unknown';
+        
+        await updateDoc(assetRef, { status: 'Available', current_user_id: null });
+        await addDoc(collection(db, 'audit_logs'), {
+          asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'serialized',
+          action: 'Checkin', user_id: asset.current_user_id, user_name: userName,
+          details: `Checked in by ${userName} via 3D view`, timestamp: new Date().toISOString()
+        });
+      } else {
+        if (asset.quantity_available + qty > asset.quantity_total) throw new Error("Exceeds capacity");
+        await updateDoc(assetRef, { quantity_available: asset.quantity_available + qty });
+        await addDoc(collection(db, 'audit_logs'), {
+          asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'bulk',
+          action: 'Quantity Restock', quantity: qty,
+          details: `Restocked ${qty} unit(s) via 3D view`, timestamp: new Date().toISOString()
+        });
+      }
       
       onActionSuccess();
       setSelectedAsset(null);
@@ -412,13 +450,26 @@ export default function ThreeDashboard({ assets, users, onActionSuccess }) {
     setLoading(true);
     setErrorMessage('');
     try {
-      const response = await fetch(`/api/assets/${selectedAsset.id}/maintenance`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Maintenance transition failed');
+      const assetRef = doc(db, 'assets', selectedAsset.id);
+      const assetSnap = await getDoc(assetRef);
+      if (!assetSnap.exists()) throw new Error("Asset not found");
+      const asset = assetSnap.data();
+
+      if (action === 'start') {
+        if (asset.status !== 'Available') throw new Error("Asset must be available");
+        await updateDoc(assetRef, { status: 'Maintenance' });
+        await addDoc(collection(db, 'audit_logs'), {
+          asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'serialized',
+          action: 'Maintenance Start', details: 'Sent to maintenance via 3D view', timestamp: new Date().toISOString()
+        });
+      } else {
+        if (asset.status !== 'Maintenance') throw new Error("Asset must be in maintenance");
+        await updateDoc(assetRef, { status: 'Available' });
+        await addDoc(collection(db, 'audit_logs'), {
+          asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'serialized',
+          action: 'Maintenance End', details: 'Resolved maintenance via 3D view', timestamp: new Date().toISOString()
+        });
+      }
       
       onActionSuccess();
       setSelectedAsset(null);
