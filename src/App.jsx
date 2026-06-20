@@ -22,7 +22,7 @@ import {
   Phone
 } from 'lucide-react';
 import { db, auth, signOut, onAuthStateChanged } from './firebase';
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc, setDoc, where, getDocs, getDoc, addDoc, updateDoc } from 'firebase/firestore';
 import DashboardView from './components/DashboardView';
 import InventoryView from './components/InventoryView';
 import LogsView from './components/LogsView';
