@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
@@ -24,6 +25,7 @@ const firebaseConfig = {
 
 let app;
 let auth;
+let db;
 
 try {
   if (!getApps().length) {
@@ -32,11 +34,13 @@ try {
     app = getApp();
   }
   auth = getAuth(app);
+  db = getFirestore(app);
 } catch (error) {
   console.error("Firebase initialization error", error);
 }
 
 export {
+  db,
   auth,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,

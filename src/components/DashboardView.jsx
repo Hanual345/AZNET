@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Play, CheckCircle, ShieldAlert, Users, Calendar, ArrowRight, User, Key, Wrench } from 'lucide-react';
+import { db } from '../firebase';
+import { collection, addDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 
 export default function DashboardView({ assets, logs, users, stats, onActionSuccess }) {
   const [selectedAsset, setSelectedAsset] = useState(null);
@@ -26,37 +28,81 @@ export default function DashboardView({ assets, logs, users, stats, onActionSucc
     setLoading(true);
     setError('');
 
-    let endpoint = '';
-    let body = {};
-
-    if (actionType === 'checkout') {
-      endpoint = `/api/assets/${selectedAsset.id}/checkout`;
-      body = {
-        userId: Number(checkoutUser),
-        quantity: selectedAsset.type === 'bulk' ? Number(bulkQty) : 1
-      };
-    } else if (actionType === 'checkin') {
-      endpoint = `/api/assets/${selectedAsset.id}/checkin`;
-      body = {
-        quantity: selectedAsset.type === 'bulk' ? Number(bulkQty) : 1
-      };
-    } else if (actionType === 'maintenance_start') {
-      endpoint = `/api/assets/${selectedAsset.id}/maintenance`;
-      body = { action: 'start' };
-    } else if (actionType === 'maintenance_stop') {
-      endpoint = `/api/assets/${selectedAsset.id}/maintenance`;
-      body = { action: 'stop' };
-    }
-
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Operation failed');
-      
+      const assetRef = doc(db, 'assets', selectedAsset.id);
+      const assetSnap = await getDoc(assetRef);
+      if (!assetSnap.exists()) throw new Error("Asset not found");
+      const asset = assetSnap.data();
+
+      if (actionType === 'checkout') {
+        const qtyToCheckout = selectedAsset.type === 'bulk' ? Number(bulkQty) : 1;
+        const targetUserId = checkoutUser;
+        const u = users.find(user => user.id === targetUserId);
+        const userName = u ? u.name : 'Unknown';
+
+        if (selectedAsset.type === 'serialized') {
+          if (asset.status !== 'Available') throw new Error(`Asset is not Available`);
+          await updateDoc(assetRef, { status: 'Checked Out', current_user_id: targetUserId });
+          
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'serialized',
+            action: 'Checkout', user_id: targetUserId, user_name: userName,
+            details: `Checked out to ${userName}`, timestamp: new Date().toISOString()
+          });
+        } else {
+          if (asset.quantity_available < qtyToCheckout) throw new Error("Insufficient quantity.");
+          await updateDoc(assetRef, { quantity_available: asset.quantity_available - qtyToCheckout });
+          
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'bulk',
+            action: 'Quantity Checkout', user_id: targetUserId, user_name: userName,
+            quantity: qtyToCheckout, details: `Checked out ${qtyToCheckout} unit(s) to ${userName}`, timestamp: new Date().toISOString()
+          });
+        }
+      } else if (actionType === 'checkin') {
+        const qtyToCheckin = selectedAsset.type === 'bulk' ? Number(bulkQty) : 1;
+
+        if (selectedAsset.type === 'serialized') {
+          if (asset.status !== 'Checked Out') throw new Error(`Asset is not Checked Out.`);
+          const u = users.find(user => user.id === asset.current_user_id);
+          const userName = u ? u.name : 'Unknown';
+
+          await updateDoc(assetRef, { status: 'Available', current_user_id: null });
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'serialized',
+            action: 'Checkin', user_id: asset.current_user_id, user_name: userName,
+            details: `Checked in by ${userName}`, timestamp: new Date().toISOString()
+          });
+        } else {
+          if (asset.quantity_available + qtyToCheckin > asset.quantity_total) throw new Error("Exceeds total inventory capacity");
+          await updateDoc(assetRef, { quantity_available: asset.quantity_available + qtyToCheckin });
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'bulk',
+            action: 'Quantity Restock', quantity: qtyToCheckin, details: `Restocked ${qtyToCheckin} unit(s)`, timestamp: new Date().toISOString()
+          });
+        }
+      } else if (actionType === 'maintenance_start') {
+        if (asset.status === 'Available') {
+          await updateDoc(assetRef, { status: 'Maintenance' });
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'serialized',
+            action: 'Maintenance Start', details: 'Asset sent to maintenance', timestamp: new Date().toISOString()
+          });
+        } else {
+           throw new Error("Asset cannot enter maintenance right now.");
+        }
+      } else if (actionType === 'maintenance_stop') {
+        if (asset.status === 'Maintenance') {
+          await updateDoc(assetRef, { status: 'Available' });
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: selectedAsset.id, asset_name: asset.name, asset_type: 'serialized',
+            action: 'Maintenance End', details: 'Maintenance resolved', timestamp: new Date().toISOString()
+          });
+        } else {
+           throw new Error("Asset cannot leave maintenance right now.");
+        }
+      }
+
       onActionSuccess();
       setSelectedAsset(null);
     } catch (err) {

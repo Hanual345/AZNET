@@ -21,12 +21,13 @@ import {
   Check,
   Phone
 } from 'lucide-react';
+import { db, auth, signOut, onAuthStateChanged } from './firebase';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc, setDoc } from 'firebase/firestore';
 import DashboardView from './components/DashboardView';
 import InventoryView from './components/InventoryView';
 import LogsView from './components/LogsView';
 import ThreeDashboard from './components/ThreeDashboard';
 import AuthGate from './components/AuthGate';
-import { auth, signOut, onAuthStateChanged } from './firebase';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -80,52 +81,55 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch all states from API
-  const fetchData = async () => {
-    try {
-      const userEmail = auth.currentUser?.email || '';
-      const [assetsRes, logsRes, usersRes, statsRes, customersRes, checkoutsRes] = await Promise.all([
-        fetch(`/api/assets?userEmail=${encodeURIComponent(userEmail)}`),
-        fetch('/api/logs'),
-        fetch('/api/users'),
-        fetch('/api/stats'),
-        fetch('/api/customers'),
-        fetch('/api/customer-checkouts')
-      ]);
-
-      if (!assetsRes.ok || !logsRes.ok || !usersRes.ok || !statsRes.ok || !customersRes.ok || !checkoutsRes.ok) {
-        throw new Error('API fetch error');
-      }
-
-      const assetsData = await assetsRes.json();
-      const logsData = await logsRes.json();
-      const usersData = await usersRes.json();
-      const statsData = await statsRes.json();
-      const customersData = await customersRes.json();
-      const checkoutsData = await checkoutsRes.json();
-
-      setAssets(assetsData);
-      setLogs(logsData);
-      setUsers(usersData);
-      setStats(statsData);
-      setCustomers(customersData);
-      setCustomerCheckouts(checkoutsData);
-      setDbStatus('Connected');
-    } catch (err) {
-      console.error('Offline polling error:', err);
-      setDbStatus('Offline (Reconnecting...)');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchData();
+    setLoading(true);
 
-    // Offline-first polling interval: sync database updates every 3 seconds
-    const interval = setInterval(fetchData, 3000);
-    return () => clearInterval(interval);
+    const unsubAssets = onSnapshot(query(collection(db, 'assets'), orderBy('created_at', 'desc')), (snapshot) => {
+      const assetsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAssets(assetsData);
+    });
+
+    const unsubLogs = onSnapshot(query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc')), (snapshot) => {
+      setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+      setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const unsubCustomers = onSnapshot(collection(db, 'customers'), (snapshot) => {
+      setCustomers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const unsubCheckouts = onSnapshot(collection(db, 'customer_checkouts'), (snapshot) => {
+      setCustomerCheckouts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    setDbStatus('Connected');
+    setLoading(false);
+
+    return () => {
+      unsubAssets();
+      unsubLogs();
+      unsubUsers();
+      unsubCustomers();
+      unsubCheckouts();
+    };
   }, []);
+
+  // Compute stats locally whenever assets change
+  useEffect(() => {
+    const available = assets.filter(a => a.type === 'serialized' && a.status === 'Available').length;
+    const checkedOut = assets.filter(a => a.type === 'serialized' && a.status === 'Checked Out').length;
+    const maintenance = assets.filter(a => a.type === 'serialized' && a.status === 'Maintenance').length;
+    const bulkAvailable = assets.filter(a => a.type === 'bulk').reduce((sum, a) => sum + (a.quantity_available || 0), 0);
+    const bulkTotal = assets.filter(a => a.type === 'bulk').reduce((sum, a) => sum + (a.quantity_total || 0), 0);
+    
+    setStats({
+      serialized: { available, checkedOut, maintenance, total: available + checkedOut + maintenance },
+      bulk: { available: bulkAvailable, total: bulkTotal }
+    });
+  }, [assets]);
 
   // Deletion Handlers
   const handleDeleteAsset = (assetId) => {
@@ -135,10 +139,8 @@ export default function App() {
       message: 'Are you sure you want to delete this asset from the database? This will permanently wipe customer checkout lease records for this item.',
       onConfirm: async () => {
         try {
-          const response = await fetch(`/api/assets/${assetId}`, { method: 'DELETE' });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || 'Failed to delete asset');
-          fetchData();
+          await deleteDoc(doc(db, 'assets', assetId));
+          setDeleteModal({ ...deleteModal, isOpen: false });
         } catch (err) {
           alert(`Delete Error: ${err.message}`);
         }
@@ -153,10 +155,8 @@ export default function App() {
       message: 'Are you sure you want to remove this staff member?',
       onConfirm: async () => {
         try {
-          const response = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || 'Failed to delete user');
-          fetchData();
+          await deleteDoc(doc(db, 'users', userId));
+          setDeleteModal({ ...deleteModal, isOpen: false });
         } catch (err) {
           alert(`Delete Error: ${err.message}`);
         }
@@ -171,10 +171,8 @@ export default function App() {
       message: 'Are you sure you want to remove this customer file?',
       onConfirm: async () => {
         try {
-          const response = await fetch(`/api/customers/${customerId}`, { method: 'DELETE' });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || 'Failed to delete customer');
-          fetchData();
+          await deleteDoc(doc(db, 'customers', customerId));
+          setDeleteModal({ ...deleteModal, isOpen: false });
         } catch (err) {
           alert(`Delete Error: ${err.message}`);
         }
@@ -189,18 +187,16 @@ export default function App() {
     if (!newUserName || !newUserEmail) return;
 
     try {
-      const response = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newUserName, email: newUserEmail, role: newUserRole })
+      const newRef = doc(collection(db, 'users'));
+      await setDoc(newRef, {
+        name: newUserName,
+        email: newUserEmail,
+        role: newUserRole
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to create user');
       
       setNewUserName('');
       setNewUserEmail('');
       setShowAddUser(false);
-      fetchData();
     } catch (err) {
       setUserError(err.message);
     }
@@ -213,13 +209,12 @@ export default function App() {
     if (!newCustName || !newCustContact) return;
 
     try {
-      const response = await fetch('/api/customers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newCustName, contact_no: newCustContact, email: newCustEmail })
+      const newRef = doc(collection(db, 'customers'));
+      await setDoc(newRef, {
+        name: newCustName,
+        contact_no: newCustContact,
+        email: newCustEmail
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to create customer');
 
       setNewCustName('');
       setNewCustContact('');
@@ -276,14 +271,9 @@ Thank you for doing business with AZNET!
     e.preventDefault();
     setCheckoutError('');
     setCheckoutLoading(true);
+    setCheckoutError('');
 
-    if (!custName || !custContact || !custAssetId || custPrice === undefined) {
-      setCheckoutError('Please populate all required checkout fields.');
-      setCheckoutLoading(false);
-      return;
-    }
-
-    const selectedAsset = assets.find(a => a.id === Number(custAssetId));
+    const selectedAsset = assets.find(a => a.id === custAssetId);
     if (!selectedAsset) {
       setCheckoutError('Invalid asset selected.');
       setCheckoutLoading(false);
@@ -291,26 +281,53 @@ Thank you for doing business with AZNET!
     }
 
     try {
-      const response = await fetch('/api/customer-checkouts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerName: custName,
-          contactNo: custContact,
-          email: custEmail,
-          assetId: Number(custAssetId),
-          price: Number(custPrice),
-          warrantyInfo: custWarranty,
-          quantity: selectedAsset.type === 'bulk' ? Number(custQty) : 1
-        })
+      const assetRef = doc(db, 'assets', selectedAsset.id);
+      
+      // Look for customer or create
+      const custQ = query(collection(db, 'customers'), where('name', '==', custName), where('contact_no', '==', custContact));
+      const custSnaps = await getDocs(custQ);
+      let customerId;
+      if (custSnaps.empty) {
+        const newCustRef = await addDoc(collection(db, 'customers'), {
+          name: custName, contact_no: custContact, email: custEmail, created_at: new Date().toISOString()
+        });
+        customerId = newCustRef.id;
+      } else {
+        customerId = custSnaps.docs[0].id;
+      }
+
+      const qty = selectedAsset.type === 'bulk' ? Number(custQty) : 1;
+
+      if (selectedAsset.type === 'serialized') {
+        if (selectedAsset.status !== 'Available') throw new Error("Asset is not available");
+        await updateDoc(assetRef, { status: 'Checked Out' });
+      } else {
+        if (selectedAsset.quantity_available < qty) throw new Error("Insufficient quantity");
+        await updateDoc(assetRef, { quantity_available: selectedAsset.quantity_available - qty });
+      }
+
+      const newCheckoutRef = await addDoc(collection(db, 'customer_checkouts'), {
+        customer_id: customerId,
+        customer_name: custName,
+        customer_contact: custContact,
+        asset_id: selectedAsset.id,
+        asset_name: selectedAsset.name,
+        serial_number: selectedAsset.serial_number || null,
+        price: Number(custPrice),
+        warranty_info: custWarranty || 'No Warranty',
+        checkout_date: new Date().toISOString(),
+        return_date: null
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed customer checkout transaction');
+      await addDoc(collection(db, 'audit_logs'), {
+        asset_id: selectedAsset.id, asset_name: selectedAsset.name, asset_type: selectedAsset.type,
+        action: selectedAsset.type === 'serialized' ? 'Checkout' : 'Quantity Checkout',
+        quantity: qty, details: `Checked out to customer ${custName}`, timestamp: new Date().toISOString()
+      });
 
       // Download transaction receipt spec
       downloadReceipt({
-        id: data.id,
+        id: newCheckoutRef.id,
         customerName: custName,
         contactNo: custContact,
         email: custEmail,
@@ -318,7 +335,7 @@ Thank you for doing business with AZNET!
         serialNumber: selectedAsset.serial_number,
         price: Number(custPrice),
         warrantyInfo: custWarranty,
-        quantity: selectedAsset.type === 'bulk' ? Number(custQty) : 1
+        quantity: qty
       });
 
       // Clear Form states
@@ -328,7 +345,6 @@ Thank you for doing business with AZNET!
       setCustAssetId('');
       setCustPrice('');
       setCustQty(1);
-      fetchData();
     } catch (err) {
       setCheckoutError(err.message);
     } finally {
@@ -344,12 +360,28 @@ Thank you for doing business with AZNET!
       message: 'Process return and set hardware back in available stock?',
       onConfirm: async () => {
         try {
-          const response = await fetch(`/api/customer-checkouts/${checkoutId}/return`, {
-            method: 'POST'
-          });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || 'Return failed');
-          fetchData();
+          const checkoutRef = doc(db, 'customer_checkouts', checkoutId);
+          const checkoutSnap = await getDoc(checkoutRef);
+          if (!checkoutSnap.exists()) throw new Error("Checkout record not found");
+          const checkout = checkoutSnap.data();
+
+          const assetRef = doc(db, 'assets', checkout.asset_id);
+          const assetSnap = await getDoc(assetRef);
+          
+          await updateDoc(checkoutRef, { return_date: new Date().toISOString() });
+
+          if (assetSnap.exists()) {
+            const asset = assetSnap.data();
+            if (asset.type === 'serialized') {
+              await updateDoc(assetRef, { status: 'Available' });
+            } else {
+              await updateDoc(assetRef, { quantity_available: Math.min(asset.quantity_total, asset.quantity_available + 1) });
+            }
+            await addDoc(collection(db, 'audit_logs'), {
+              asset_id: checkout.asset_id, asset_name: asset.name, asset_type: asset.type,
+              action: 'Checkin', details: `Returned by customer ${checkout.customer_name}`, timestamp: new Date().toISOString()
+            });
+          }
         } catch (err) {
           alert(`Return Error: ${err.message}`);
         }
@@ -360,7 +392,7 @@ Thank you for doing business with AZNET!
   // Pre-populate price on asset select
   const handleAssetSelectChange = (assetIdVal) => {
     setCustAssetId(assetIdVal);
-    const asset = assets.find(a => a.id === Number(assetIdVal));
+    const asset = assets.find(a => a.id === assetIdVal);
     if (asset) {
       setCustPrice(asset.cost);
     } else {

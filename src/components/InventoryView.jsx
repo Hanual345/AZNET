@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Package, Plus, Clipboard, MapPin, DollarSign, Eye, Tag, AlertCircle, ArrowRight, UserCheck, Trash2 } from 'lucide-react';
+import { db } from '../firebase';
+import { collection, addDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 
 export default function InventoryView({ assets, users, currentUser, onActionSuccess, onDeleteAsset }) {
   const [activeTab, setActiveTab] = useState('serialized'); // 'serialized' | 'bulk'
@@ -53,25 +55,32 @@ export default function InventoryView({ assets, users, currentUser, onActionSucc
     }
 
     try {
-      const response = await fetch('/api/assets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          type,
-          category,
-          serial_number: type === 'serialized' ? serialNumber : null,
-          quantity_total: type === 'bulk' ? Number(quantityTotal) : null,
-          location,
-          cost: Number(cost),
-          access_role: accessRole
-        })
+      const newAsset = {
+        name,
+        type,
+        category,
+        serial_number: type === 'serialized' ? serialNumber : null,
+        status: type === 'serialized' ? 'Available' : null,
+        current_user_id: null,
+        quantity_total: type === 'bulk' ? Number(quantityTotal) : null,
+        quantity_available: type === 'bulk' ? Number(quantityTotal) : null,
+        location,
+        cost: Number(cost),
+        access_role: accessRole,
+        created_at: new Date().toISOString()
+      };
+
+      const docRef = await addDoc(collection(db, 'assets'), newAsset);
+
+      await addDoc(collection(db, 'audit_logs'), {
+        asset_id: docRef.id,
+        asset_name: name,
+        asset_type: type,
+        action: 'Create',
+        details: `Created asset in inventory at ${location}`,
+        timestamp: new Date().toISOString()
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to add asset');
-
-      // Clear Form
       setName('');
       setSerialNumber('');
       setQuantityTotal(1);
@@ -92,30 +101,76 @@ export default function InventoryView({ assets, users, currentUser, onActionSucc
     setLoading(true);
     setActionError('');
 
-    let endpoint = '';
-    let body = {};
-
-    if (actionType === 'checkout') {
-      endpoint = `/api/assets/${activeActionAsset.id}/checkout`;
-      body = {
-        userId: Number(checkoutUser),
-        quantity: activeActionAsset.type === 'bulk' ? Number(actionQty) : 1
-      };
-    } else if (actionType === 'checkin') {
-      endpoint = `/api/assets/${activeActionAsset.id}/checkin`;
-      body = {
-        quantity: activeActionAsset.type === 'bulk' ? Number(actionQty) : 1
-      };
-    }
-
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Operation failed');
+      const assetRef = doc(db, 'assets', activeActionAsset.id);
+      const assetSnap = await getDoc(assetRef);
+      if (!assetSnap.exists()) throw new Error("Asset not found");
+      const asset = assetSnap.data();
+
+      if (actionType === 'checkout') {
+        const qtyToCheckout = activeActionAsset.type === 'bulk' ? Number(actionQty) : 1;
+        const targetUserId = checkoutUser;
+        const u = users.find(user => user.id === targetUserId);
+        const userName = u ? u.name : 'Unknown';
+
+        if (activeActionAsset.type === 'serialized') {
+          if (asset.status !== 'Available') throw new Error(`Asset is not Available`);
+          await updateDoc(assetRef, { status: 'Checked Out', current_user_id: targetUserId });
+          
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: activeActionAsset.id, asset_name: asset.name, asset_type: 'serialized',
+            action: 'Checkout', user_id: targetUserId, user_name: userName,
+            details: `Checked out to ${userName}`, timestamp: new Date().toISOString()
+          });
+        } else {
+          if (asset.quantity_available < qtyToCheckout) throw new Error("Insufficient quantity.");
+          await updateDoc(assetRef, { quantity_available: asset.quantity_available - qtyToCheckout });
+          
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: activeActionAsset.id, asset_name: asset.name, asset_type: 'bulk',
+            action: 'Quantity Checkout', user_id: targetUserId, user_name: userName,
+            quantity: qtyToCheckout, details: `Checked out ${qtyToCheckout} unit(s) to ${userName}`, timestamp: new Date().toISOString()
+          });
+        }
+      } else if (actionType === 'checkin') {
+        const qtyToCheckin = activeActionAsset.type === 'bulk' ? Number(actionQty) : 1;
+
+        if (activeActionAsset.type === 'serialized') {
+          if (asset.status !== 'Checked Out') throw new Error(`Asset is not Checked Out.`);
+          const u = users.find(user => user.id === asset.current_user_id);
+          const userName = u ? u.name : 'Unknown';
+
+          await updateDoc(assetRef, { status: 'Available', current_user_id: null });
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: activeActionAsset.id, asset_name: asset.name, asset_type: 'serialized',
+            action: 'Checkin', user_id: asset.current_user_id, user_name: userName,
+            details: `Checked in by ${userName}`, timestamp: new Date().toISOString()
+          });
+        } else {
+          if (asset.quantity_available + qtyToCheckin > asset.quantity_total) throw new Error("Exceeds total inventory limit");
+          await updateDoc(assetRef, { quantity_available: asset.quantity_available + qtyToCheckin });
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: activeActionAsset.id, asset_name: asset.name, asset_type: 'bulk',
+            action: 'Quantity Restock', quantity: qtyToCheckin, details: `Restocked ${qtyToCheckin} unit(s)`, timestamp: new Date().toISOString()
+          });
+        }
+      } else if (actionType === 'maintenance') {
+        if (asset.status === 'Available') {
+          await updateDoc(assetRef, { status: 'Maintenance' });
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: activeActionAsset.id, asset_name: asset.name, asset_type: 'serialized',
+            action: 'Maintenance Start', details: 'Asset sent to maintenance', timestamp: new Date().toISOString()
+          });
+        } else if (asset.status === 'Maintenance') {
+          await updateDoc(assetRef, { status: 'Available' });
+          await addDoc(collection(db, 'audit_logs'), {
+            asset_id: activeActionAsset.id, asset_name: asset.name, asset_type: 'serialized',
+            action: 'Maintenance End', details: 'Maintenance resolved', timestamp: new Date().toISOString()
+          });
+        } else {
+           throw new Error("Asset cannot enter maintenance right now.");
+        }
+      }
 
       setActiveActionAsset(null);
       setActionType('');
